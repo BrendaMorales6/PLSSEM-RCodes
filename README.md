@@ -1,5 +1,6 @@
 # PLSSEM-RCodes
 
+```{r}
 #install.packages("readxl")
 #install.packages("mvnfast")
 #install.packages("parameters")
@@ -24,27 +25,42 @@ library(parameters)
 library(MVN)
 library(plspm)
 library(gmnl)
+```
 
 **MVN library to test normality and kurtosis**
-RHCSurvey <- read_excel("D:/Users/Doc.xlsx",sheet = "RHC", skip = 2)
+
+```{r}
+RHCSurvey <- read_excel("D:/Users/70896713H/OneDrive - Universidad de Alcala/CSIC/Papers/Morales, Ovando & Mayans 2025/CombinedDataset_complete_.xlsx",sheet = "RHC", skip = 2)
 norm <- mvn((RHCSurvey[6:22]), mvnTest = "mardia")
 norm.multivar <- as.data.frame(norm$multivariateNormality)
 norm <- as.data.frame(norm$Descriptives)
 norm
-
+```
 
 **Qqplot and histogram**
+
+```{r}
 qqplot <- mvn(data = (RHCSurvey[4:31]), mvnTest = "mardia", univariatePlot="qqplot")
 histogram <- mvn(data = (RHCSurvey[4:31]), mvnTest = "mardia", univariatePlot="histogram")
+```
 
 ***Internal consistency: Cronbach's Alpha***
+
+```{r}
 psych::alpha((RHCSurvey[4:31]))
+```
+
+**Confirmatory Factor Analysis**
 
 *KMO and Fligner-Killeen test*
+
+```{r}
 KMO(RHCSurvey[,c(4:31)])
 fligner.test(RHCSurvey[,c(4:31)])
-
+```
 *Factor loadings'*
+
+```{r}
 scree(RHCSurvey[,c(4:31)], main="Sediment graph")
 #Factor loadings.31
 Behaviour <- psych::fa(RHCSurvey[,c(4, 5, 7, 8, 10, 11, 13:16, 26:31)], nfactor = 5,rotate = "varimax", fm="pa") %>%
@@ -54,8 +70,12 @@ Behaviour
 #Adter running the CFA, we select the cross loadings higher than .70
 fac.SEM <- psych::fa(RHCSurvey[,c(4, 5, 7, 8, 10, 11, 13:16, 26:31)], nfactor = 1,rotate = "varimax", fm="pa") %>% model_parameters(sort = TRUE, threshold = "max")
 fac.SEM
+```
 
 *Structural model*
+
+
+```{r}
 path_matrix <- rbind(
   c(0, 0, 0, 0, 0, 0), # Risk
   c(1, 0, 0, 0, 0, 0), # Trust
@@ -79,17 +99,20 @@ modes <- c("A", "A", "A", "A", "A", "A")
 #PLS-PMPBC9
 pls_model <- plspm(RHCSurvey, path_matrix, blocks, modes)
 summary(pls_model)
+```
 
 **VIF**
+
+```{r}
 calc_vif <- function(pls_model) {
-    # Comunalities and names extraction
+    # Extraer las comunalidades y los nombres de las variables
     communalities <- pls_model$outer_model$communality
     variable_names <- pls_model$outer_model$name
     
-    # VIF values
+    # Calcular VIF
     vif_values <- 1 / (1 - communalities)
     
-    # VIF values and names (dataframe creation)
+    # Crear un dataframe con los nombres de las variables y los valores de VIF
     vif_df <- data.frame(Variable = variable_names, VIF = vif_values)
     
     return(vif_df)
@@ -99,10 +122,15 @@ calc_vif <- function(pls_model) {
 vif_values <- calc_vif(pls_model)
 print(vif_values)
 
+```
 **Global fit**
-pls_model$gof
 
+```{r}
+pls_model$gof
+```
 **AVE and composite reliability**
+
+```{r}
 # AVE
 ave_values <- pls_model$outer_model %>%
   group_by(block) %>%
@@ -113,8 +141,10 @@ composite_reliability <- pls_model$outer_model %>%
   summarize(CR = sum((loading)^2) / (sum((loading)^2) + sum((1 - loading)^2)))
 print(ave_values)
 print(composite_reliability)
-
+```
 **Fornell - Larcker criterion**
+
+```{r}
 #AVE
 ave_values <- pls_model$outer_model %>%
   group_by(block) %>%
@@ -136,8 +166,10 @@ for (i in 1:length(blocks)) {
   }
 }
 print(fornell_larcker)
-
+```
 **Heterotrait - monotrait Matrix**
+
+```{r}
 calculate_htmt <- function(pls_model, RHCSurvey, blocks) {
   # latent constructs
   scores <- pls_model$scores
@@ -163,21 +195,28 @@ calculate_htmt <- function(pls_model, RHCSurvey, blocks) {
 }
 htmt_matrix <- calculate_htmt(pls_model, RHCSurvey, blocks)
 print(htmt_matrix)
-
+```
 **Boot-strapping**
+
+```{r}
 set.seed(123)
 pls_model_boot <- plspm(RHCSurvey, path_matrix, blocks, modes, boot.val = TRUE, br = 10000)
 boot_results <- pls_model_boot$boot
 print(boot_results)
+```
 
 ***Latent scores' extraction for the logistic model***
+
+```{r}
 latent_scores <- pls_model$scores
 latent_scores_df <- as.data.frame(latent_scores)
 SemConstructs <- cbind(RHCSurvey, latent_scores_df)
 file_path <- "SemConstructs.xlsx"
 write_xlsx(SemConstructs, path = file_path)
+```
 
 **WTP Calculations by segment and type of project**
+```{r}
 #Mean WTP 
 wtp_mean_A <- WTPAP %>%
   group_by(ProjectType, SpeciesType, Location) %>%
@@ -189,3 +228,4 @@ wtp_promedio_B <- WTPBP %>%
 
 print(wtp_mean_A)
 print(wtp_mean_B)
+```
