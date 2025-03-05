@@ -1,9 +1,9 @@
-**Structural equation model code analysed with partial least squares
+# Structural equation model code analysed with partial least squares
 
 This repository contains the RStudio code employed for the analysis of Structural Equation Modelling using Partial Least Squares, applied to a Theory of Planned behaviour survey.  The code has been developed specifically for this study and allows for the replication of the results published at (Springer Nature?).
 The main R library is "plspm". 
 
-**Bibliography**
+# Bibliography
 Hair, J., Sarstedt, M., Pieper, T., Ringle, C. (2012). The use of partial least squares structural equation modelling in strategic management research: a review of past practices and recommendations for future applications. Long Range Planning, 45 (5-6), 320—340, 
  https://doi.org/10.1016/j.lrp.2012.09.008
 Hair, J.F., Black, W., Babin, B., Anderson, R. (2010). Multivariate data analysis. 7th edition. Pearson. 
@@ -12,7 +12,7 @@ Hair, J.F., Ringle, C.M., Sarstedt, M. (2012). Partial least squares: The better
 Hair, J.F., Risher, M., J. J.and Sarstedt, Ringle, C.M. (2019). hen to use and how to report the results of pls-sem. European Business Review , 31 (1), 2–24, https://doi.org/10.1108/EBR-11-2018-0203/FULL/XML
 Tenenhaus M., Esposito Vinzi V., Chatelin Y.M., and Lauro C. (2005) PLS path modeling. Computational Statistics & Data Analysis, 48, pp. 159-205.
 
-##Citation Requirement
+## Citation Requirement
 If you use this code in your research or software, you must cite the following article:
 Morales, B. and Ovando, P. (2025) Organisational Attitudes and Preferences Toward Forest Carbon Offsets in Spain’s Carbon Footprint Registry
 
