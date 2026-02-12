@@ -218,19 +218,819 @@ SemConstructs <- cbind(RHCSurvey, latent_scores_df)
 file_path <- "SemConstructs.xlsx"
 write_xlsx(SemConstructs, path = file_path)
 ```
+#Random utility models
+## Data
+```{r}
+dfA <- read_excel("D:/ChoiceEcolEcon.xlsx", sheet = "SegAClean")
+dfB <- read_excel("D:/ChoiceEcolEcon.xlsx", sheet = "SegB")
 
-**WTP Calculations by segment and type of project**
+# --- 1)Atributes
+attr_Project  <- intersect(c("Project", "project"), names(dfA))[1]
+attr_Location <- intersect(c("Location", "location"), names(dfA))[1]
+attr_Species  <- intersect(c("Species", "Specie", "species", "specie"), names(dfA))[1]
+attr_Price    <- intersect(c("Price", "price"), names(dfA))[1]
+
+stopifnot(!is.na(attr_Project), !is.na(attr_Location),
+          !is.na(attr_Species), !is.na(attr_Price))
+
+attrs <- c(attr_Project, attr_Location, attr_Species, attr_Price)
+
+# --- 2) Create Alt (optout/project) and ASC_accept from ASC_optout
+dfA <- dfA %>%
+  mutate(
+    Alt = ifelse(ASC_optout == 1, "optout", "project"),
+    ASC_accept = ifelse(ASC_optout == 1, 0, 1)
+  )
+
+# --- 3) Replace -4 by 0 only in opt-out rows
+dfA <- dfA %>%
+  mutate(across(all_of(attrs), ~ ifelse(Alt == "optout" & .x == -4, 0, .x)))
+
+# --- 4) Create chid (ID by choice card)
+has_qid  <- "QuestionId" %in% names(dfA) || "Question_Id" %in% names(dfA)
+qid_name <- if ("QuestionId" %in% names(dfA)) "QuestionId" else "Question_Id"
+id_name  <- if ("Id" %in% names(dfA)) "Id" else "id"
+pqi_name <- if ("ParentQuestionId" %in% names(dfA)) "ParentQuestionId" else "Parent_Question_Id"
+
+if (has_qid) {
+  dfA <- dfA %>%
+    mutate(chid = paste(.data[[id_name]], .data[[pqi_name]], .data[[qid_name]], sep = "_"))
+} else {
+  ord_name <- if ("Ordering" %in% names(dfA)) "Ordering" else stop("Falta QuestionId y Ordering")
+  dfA <- dfA %>%
+    mutate(chid = paste(.data[[id_name]], .data[[pqi_name]], .data[[ord_name]], sep = "_"))
+}
+
+# --- 5) Verification (Each card must have only one choice)
+dfA %>%
+  group_by(chid) %>%
+  summarise(chosen_sum = sum(Choice), .groups = "drop") %>%
+  filter(chosen_sum != 1)
+
+# --- 6) mlogit definition
+library(mlogit)
+df_mldA <- mlogit.data(dfA,
+                           choice   = "Choice",
+                           shape    = "long",
+                           alt.var  = "Alt",
+                           chid.var = "chid",
+                           id.var   = "Id")
+```
+
+## Conditional variables interaction with ASC
+```{r}
+df_mldA$cRisk  <- scale(df_mldA$Risk, center=TRUE, scale=FALSE)
+df_mldA$cAtt <- scale(df_mldA$Attitudes, center=TRUE, scale=FALSE)
+df_mldA$cSN  <- scale(df_mldA$SubjectiveNorms, center=TRUE, scale=FALSE)
+df_mldA$cPBC  <- scale(df_mldA$PerceivedBehavC, center=TRUE, scale=FALSE)
+df_mldA$cTrust  <- scale(df_mldA$Trust, center=TRUE, scale=FALSE)
+
+df_mldA$ASC_Att <- df_mldA$ASC_accept * df_mldA$cAtt
+df_mldA$ASC_SN  <- df_mldA$ASC_accept * df_mldA$cSN
+df_mldA$ASC_Trust<- df_mldA$ASC_accept * df_mldA$cTrust
+df_mldA$ASC_PBC <- df_mldA$ASC_accept * df_mldA$cPBC 
+df_mldA$ASC_Risk <- df_mldA$ASC_accept * df_mldA$cRisk
+df_mldA$ASC_Service <- df_mldA$ASC_accept * df_mldA$Servicios
+df_mldA$ASC_PYME <- df_mldA$ASC_accept * df_mldA$pyme
+df_mldA$ASC_SustDepart <- df_mldA$ASC_accept * df_mldA$SustDepart
+df_mldA$ASC_Pastbehav <- df_mldA$ASC_accept * df_mldA$PastBehav
+
+df_mldB$cTrust  <- scale(df_mldB$Trust, center=TRUE, scale=FALSE)
+df_mldB$cRisk  <- scale(df_mldB$Risk, center=TRUE, scale=FALSE)
+df_mldB$cAtt <- scale(df_mldB$Attitudes, center=TRUE, scale=FALSE)
+df_mldB$cSN  <- scale(df_mldB$SubjectiveNorms, center=TRUE, scale=FALSE)
+df_mldB$cPBC  <- scale(df_mldB$PerceivedBehavC, center=TRUE, scale=FALSE)
+
+df_mldB$ASC_Att <- df_mldB$ASC_accept * df_mldB$cAtt
+df_mldB$ASC_SN  <- df_mldB$ASC_accept * df_mldB$cSN
+df_mldB$ASC_PBC <- df_mldB$ASC_accept * df_mldB$cPBC
+df_mldB$ASC_Risk <- df_mldB$ASC_accept * df_mldB$cRisk
+df_mldB$ASC_Trust<- df_mldB$ASC_accept * df_mldB$cTrust
+df_mldB$ASC_Service <- df_mldB$ASC_accept * df_mldB$Servicios
+df_mldB$ASC_PYME <- df_mldB$ASC_accept * df_mldB$pyme
+df_mldB$ASC_SustDepart <- df_mldB$ASC_accept * df_mldB$SustDepart
+df_mldB$ASC_Pastbehav <- df_mldB$ASC_accept * df_mldB$PastBehav
+```
+
+
+## Test robustness 
+```{r}
+## =========================
+## 0) Helpers
+## =========================
+get_ll <- function(m) as.numeric(logLik(m))
+get_k  <- function(m) attr(logLik(m), "df")
+
+lr_test <- function(m_small, m_large) {
+  ll0 <- get_ll(m_small); ll1 <- get_ll(m_large)
+  k0  <- get_k(m_small);  k1  <- get_k(m_large)
+
+  if (k1 <= k0) stop("m_large must have more parameters than m_small (nested models).")
+
+  LR  <- 2 * (ll1 - ll0)
+  df  <- k1 - k0
+  p   <- pchisq(LR, df = df, lower.tail = FALSE)
+
+  data.frame(
+    LL_small = ll0, LL_large = ll1,
+    k_small = k0,  k_large = k1,
+    LR = LR, df = df, p_value = p
+  )
+}
+
+aicbic <- function(m) {
+  data.frame(
+    LL  = get_ll(m),
+    k   = get_k(m),
+    AIC = AIC(m),
+    BIC = BIC(m)
+  )
+}
+
+## =========================
+## 1) LR tests between nested models (per segment)
+## =========================
+# Segment A
+LR_A_base_vs_ext <- lr_test(m_cl_A0, m_cl_A1)
+LR_A_ext_vs_tpb  <- lr_test(m_cl_A1, m_cl_A3)
+
+# Segment B
+LR_B_base_vs_ext <- lr_test(m_cl_B0, m_cl_B1)
+LR_B_ext_vs_tpb  <- lr_test(m_cl_B1, m_cl_B3)
+
+LR_A_base_vs_ext
+LR_A_ext_vs_tpb
+LR_B_base_vs_ext
+LR_B_ext_vs_tpb
+
+## Optional: pretty table
+LR_table <- rbind(
+  cbind(Segment="A", Comparison="Baseline vs Extended", LR_A_base_vs_ext),
+  cbind(Segment="A", Comparison="Extended vs TPB",     LR_A_ext_vs_tpb),
+  cbind(Segment="B", Comparison="Baseline vs Extended", LR_B_base_vs_ext),
+  cbind(Segment="B", Comparison="Extended vs TPB",     LR_B_ext_vs_tpb)
+)
+print(LR_table, row.names = FALSE)
+
+## =========================
+## 2) Coefficient stability table across specs
+##    (core attributes only)
+## =========================
+core <- c("Project","Location","Specie","Price")
+
+coef_table <- function(...) {
+  mods <- list(...)
+  mod_names <- as.character(match.call())[-1]
+  out <- lapply(seq_along(mods), function(i){
+    b  <- coef(mods[[i]])
+    se <- sqrt(diag(vcov(mods[[i]])))
+    keep <- intersect(core, names(b))
+    data.frame(
+      model = mod_names[i],
+      term  = keep,
+      estimate = b[keep],
+      se = se[keep],
+      z = b[keep]/se[keep],
+      p = 2*pnorm(abs(b[keep]/se[keep]), lower.tail = FALSE),
+      row.names = NULL
+    )
+  })
+  do.call(rbind, out)
+}
+
+# Segment A
+stab_A <- coef_table(m_cl_A0, m_cl_A1, m_cl_A3)
+# Segment B
+stab_B <- coef_table(m_cl_B0, m_cl_B1, m_cl_B3)
+
+stab_A
+stab_B
+
+## If you want a wide table (one row per term, columns by model)
+to_wide <- function(stab_df){
+  # base R reshape
+  reshape(stab_df[,c("model","term","estimate")],
+          idvar="term", timevar="model", direction="wide")
+}
+to_wide(stab_A)
+to_wide(stab_B)
+
+## =========================
+## 3) WTP robustness: Delta vs Krinsky–Robb 
+##    - Uses your model's coef + vcov
+##    - Works with dummy coding (0/1) OR effect coding (-1/+1)
+## =========================
+# Delta-method WTP for a single attribute coefficient beta_k:
+# WTP = - beta_k / beta_price
+wtp_delta_single <- function(attr, b, V, price_name="Price") {
+  if (!requireNamespace("msm", quietly=TRUE)) {
+    stop("Install package 'msm' to use deltamethod: install.packages('msm')")
+  }
+  beta_k <- b[attr]; beta_p <- b[price_name]
+  par_vec <- c(beta_k, beta_p)
+  Vsub <- V[c(attr, price_name), c(attr, price_name)]
+  est <- as.numeric(- beta_k / beta_p)
+  se  <- sqrt(msm::deltamethod(~ -x1/x2, mean = par_vec, cov = Vsub))
+  c(est=est, se=se, lo=est-1.96*se, hi=est+1.96*se)
+}
+wtp_kr_single <- function(attr, b, V, price_name="Price", S=20000, seed=2025) {
+  if (!requireNamespace("MASS", quietly=TRUE)) {
+    stop("Install package 'MASS' to use mvrnorm (usually bundled).")
+  }
+  set.seed(seed)
+  draws <- MASS::mvrnorm(n=S, mu=b, Sigma=V)
+
+  ix_k <- match(attr, names(b))
+  ix_p <- match(price_name, names(b))
+
+  w <- - draws[,ix_k] / draws[,ix_p]
+  w <- w[is.finite(w)]  # safety
+
+  qs <- as.numeric(quantile(w, probs = c(0.025, 0.975), na.rm = TRUE, names = FALSE))
+
+  c(mean = mean(w, na.rm=TRUE),
+    q2.5 = qs[1],
+    q97.5 = qs[2])
+}
+
+
+wtp_compare <- function(model, attrs=c("Project","Specie","Location"),
+                        price_name="Price", S=20000, seed=2025) {
+  b <- coef(model); V <- vcov(model)
+  out <- lapply(attrs, function(a){
+    d <- wtp_delta_single(a, b, V, price_name)
+    k <- wtp_kr_single(a, b, V, price_name, S=S, seed=seed)
+    data.frame(
+      attribute=a,
+      WTP_delta = d["est"], CIlo_delta = d["lo"], CIhi_delta = d["hi"],
+      WTP_KR    = k["mean"], CIlo_KR    = k["q2.5"], CIhi_KR = k["q97.5"],
+      row.names = NULL
+    )
+  })
+  do.call(rbind, out)
+}
+
+# Run for TPB specs 
+WTP_A <- wtp_compare(m_cl_A3)
+WTP_B <- wtp_compare(m_cl_B3)
+
+WTP_A
+WTP_B
+```
+
+#### Mixed logit: Halton draws
+
+##### Functions' definition 
+```{r}
+set.seed(45855)
+
+# ===============================
+# ROBUST AUXILIAR FUNCTIONS
+# ===============================
+len1 <- function(x){
+  if (is.null(x) || length(x) == 0) return(NA_real_)
+  y <- suppressWarnings(as.numeric(x))
+  if (length(y) == 0) return(NA_real_)
+  if (!is.finite(y[1])) return(NA_real_) else return(y[1])
+}
+
+extract_se <- function(m){
+  cf <- coef(m)
+  out <- tryCatch({
+    V  <- vcov(m)
+    se <- sqrt(diag(V))
+    if(is.null(names(se)) && !is.null(rownames(V))) names(se) <- rownames(V)
+    if(is.null(names(se))) names(se) <- names(cf)
+    se
+  }, error = function(e) {
+    se <- rep(NA_real_, length(cf))
+    names(se) <- names(cf)
+    se
+  })
+  out
+}
+
+compare_models_hybrid <- function(m_new, m_old, beta_switch, se_switch){
+  b_new <- coef(m_new); b_old <- coef(m_old)
+  alln  <- union(names(b_new), names(b_old))
+  b_new <- b_new[alln]; b_old <- b_old[alln]
+
+  se_new <- extract_se(m_new)[alln]
+  se_old <- extract_se(m_old)[alln]
+
+  db_abs  <- abs(b_new - b_old)
+  db_rel  <- abs(b_new - b_old) / (abs(b_old) + 1e-12)
+  dse_abs <- abs(se_new - se_old)
+  dse_rel <- abs(se_new - se_old) / (abs(se_old) + 1e-12)
+
+  beta_metric <- ifelse(abs(b_old) < beta_switch, db_abs, db_rel)
+  se_metric   <- ifelse(abs(se_old) < se_switch, dse_abs, dse_rel)
+
+  i_beta <- which.max(ifelse(is.finite(beta_metric), beta_metric, -Inf))
+  i_se   <- which.max(ifelse(is.finite(se_metric),   se_metric,   -Inf))
+
+  top_beta_name <- if(length(i_beta)) names(beta_metric)[i_beta] else NA_character_
+  top_se_name   <- if(length(i_se))   names(se_metric)[i_se]      else NA_character_
+
+  list(
+    beta_metric = beta_metric,
+    se_metric   = se_metric,
+    top_beta    = list(name = top_beta_name,
+                       old  = len1(b_old[top_beta_name]),
+                       new  = len1(b_new[top_beta_name]),
+                       met  = len1(beta_metric[top_beta_name]),
+                       used = ifelse(abs(len1(b_old[top_beta_name])) < beta_switch, "abs", "rel")),
+    top_se      = list(name = top_se_name,
+                       old  = len1(se_old[top_se_name]),
+                       new  = len1(se_new[top_se_name]),
+                       met  = len1(se_metric[top_se_name]),
+                       used = ifelse(abs(len1(se_old[top_se_name])) < se_switch, "abs", "rel")),
+    max_beta = suppressWarnings(max(beta_metric[is.finite(beta_metric)], na.rm=TRUE)),
+    max_se   = suppressWarnings(max(se_metric[is.finite(se_metric)],     na.rm=TRUE)),
+    dll      = abs(len1(logLik(m_new)) - len1(logLik(m_old)))
+  )
+}
+```
+##### Segment A Halton draws loop halton = list(c(2, 3, 5, 7)) BGFS method
 
 ```{r}
-#Mean WTP 
-wtp_mean_A <- WTPAP %>%
-  group_by(ProjectType, SpeciesType, Location) %>%
-  summarise(PriceProject = mean(UnitPrice))
-# Mean WTP
-wtp_promedio_B <- WTPBP %>%
-  group_by(ProjectType, SpeciesType, Location) %>%
-  summarise(PriceProject = mean(UnitPrice))
+ set.seed(1685)
+# ===============================
+# 1)SPECIFICATION
+# ===============================
+form_mixlA2 <- Choice ~ 0 + Project + Specie + Location + Price +
+  ASC_accept + ASC_Att + ASC_SN + ASC_PBC + ASC_SustDepart + ASC_Service
 
-print(wtp_mean_A)
-print(wtp_mean_B)
+ranp <- c(
+  Project    = "n",
+  Specie     = "n",
+  Location   = "n",
+  ASC_accept = "n"
+)
+
+data <- df_mldA
+
+# ===============================
+# 2) LOOP PARAMETERS
+# ===============================
+R_start <- 800
+step_R  <- 200
+max_R   <- 1800
+
+
+
+# ===============================
+# 3) SAFE  WRAPPER CON BFGS 
+# ===============================
+fit_gmnl_safe <- function(formula, data, ranp, R, corr = FALSE, start = NULL){
+  gmnl(formula, data=data, model="mixl", ranp=ranp, panel=TRUE,
+       R=R, halton=list(prime = c(11, 3, 5, 7)), correlation=corr,
+       method="bfgs", start=start)   # <-- default BFGS
+}
+
+# ===============================
+# 4) Stabilisation loop
+# ===============================
+fits_A <- list()
+diag_tbl_A <- data.frame(
+  R = integer(), logLik = numeric(),
+  max_beta_metric = numeric(), mover_beta = character(), metric_used_beta = character(),
+  max_se_metric   = numeric(), mover_se   = character(), metric_used_se   = character(),
+  dLL = numeric(), dLL_rel = numeric(),
+  stringsAsFactors = FALSE
+)
+
+prev_fit   <- NULL
+prev_coefs <- NULL
+Rcurr <- as.integer(R_start)
+
+repeat{
+  cat(sprintf("\n[gmnl] MIXL-A (corr=FALSE) con R = %d (Halton, BFGS) ...\n", Rcurr))
+  t0 <- Sys.time()
+  fitA <- fit_gmnl_safe(form_mixlA2, data = data, ranp = ranp,
+                        R = Rcurr, corr = FALSE, start = prev_coefs)
+  t1 <- Sys.time()
+  llA <- len1(logLik(fitA))
+  cat(sprintf("  Hecho en %.1f s | logLik = %.3f\n",
+              as.numeric(difftime(t1, t0, units="secs")), llA))
+
+  fits_A[[as.character(Rcurr)]] <- fitA
+  coefs_now <- tryCatch(coef(fitA), error=function(e) NULL)
+
+  if(is.null(prev_fit)){
+    diag_tbl_A <- rbind(diag_tbl_A, data.frame(
+      R = Rcurr, logLik = llA,
+      max_beta_metric = NA_real_, mover_beta = NA_character_, metric_used_beta = NA_character_,
+      max_se_metric   = NA_real_, mover_se   = NA_character_, metric_used_se   = NA_character_,
+      dLL = NA_real_, dLL_rel = NA_real_
+    ))
+  } else {
+    cmp <- compare_models_hybrid(fitA, prev_fit, beta_switch, se_switch)
+    dLL_abs <- len1(cmp$dll)
+    dLL_rel <- abs(dLL_abs) / (abs(len1(logLik(prev_fit))) + 1e-12)
+
+    cat(sprintf("  Summing up: max β-metric=%.6f | max SE-metric=%.6f | ΔLL_rel=%.6e\n",
+                len1(cmp$max_beta), len1(cmp$max_se), dLL_rel))
+
+    row <- data.frame(
+      R = Rcurr, logLik = llA,
+      max_beta_metric = len1(cmp$max_beta),
+      mover_beta      = cmp$top_beta$name,
+      metric_used_beta= cmp$top_beta$used,
+      max_se_metric   = len1(cmp$max_se),
+      mover_se        = cmp$top_se$name,
+      metric_used_se  = cmp$top_se$used,
+      dLL             = dLL_abs,
+      dLL_rel         = dLL_rel,
+      stringsAsFactors = FALSE
+    )
+
+    # ----  MEAN VS. SD separate criteria ----
+    b_new <- coef(fitA); b_old <- coef(prev_fit)
+    alln  <- union(names(b_new), names(b_old))
+    b_new <- b_new[alln]; b_old <- b_old[alln]
+    is_sd <- grepl("^sd\\.", alln)
+
+    db_abs <- abs(b_new - b_old)
+    db_rel <- abs(b_new - b_old) / (abs(b_old) + 1e-12)
+
+    # Mean
+    db_abs_mean <- db_abs[!is_sd]; db_rel_mean <- db_rel[!is_sd]; b_old_mean <- b_old[!is_sd]
+    beta_ok_mean <- all(ifelse(abs(b_old_mean) < beta_switch,
+                               db_abs_mean < beta_abs_tol_mean,
+                               db_rel_mean < beta_rel_tol_mean), na.rm = TRUE)
+
+    # Desviations
+    db_abs_sd <- db_abs[is_sd]; db_rel_sd <- db_rel[is_sd]; b_old_sd <- b_old[is_sd]
+    beta_ok_sd <- all(ifelse(abs(b_old_sd) < beta_switch,
+                             db_abs_sd < beta_abs_tol_sd,
+                             db_rel_sd < beta_rel_tol_sd), na.rm = TRUE)
+
+    beta_ok <- beta_ok_mean && beta_ok_sd
+    se_ok   <- ifelse(row$metric_used_se == "rel",
+                      row$max_se_metric < se_rel_tol,
+                      row$max_se_metric < se_abs_tol)
+    ll_ok   <- row$dLL_rel < ll_rel_tol
+
+    diag_tbl_A <- rbind(diag_tbl_A, row)
+
+    # ---- Stopping conditions ----
+    if (!is.na(beta_ok) && !is.na(se_ok) && !is.na(ll_ok) && beta_ok && se_ok && ll_ok) {
+      cat(">> The model reach stability (mean, sd, SE y ΔLL_rel). Stop.\n")
+      prev_fit   <- fitA
+      prev_coefs <- coefs_now
+      break
+    }
+  }
+
+  # ---- UPPER LIMIT CONTROL ----
+  if (Rcurr + step_R > max_R){
+    cat(sprintf(">> The model reach max_R=%d without reaching tolerance criteria. Stop.\n", max_R))
+    prev_fit   <- fitA
+    prev_coefs <- coefs_now
+    break
+  }
+
+  prev_fit   <- fitA
+  prev_coefs <- coefs_now
+  Rcurr      <- Rcurr + step_R
+}
+
+# ===============================
+# 5) Final model
+# ===============================
+R_final_A   <- diag_tbl_A$R[nrow(diag_tbl_A)]
+mixlA_final_Clean <- fits_A[[as.character(R_final_A)]]
+
+cat(sprintf("\n[MIXL-A final)] R = %s | logLik = %.3f\n",
+            R_final_A, len1(logLik(mixlA_final_Clean))))
+summary(mixlA_final_Clean)
+
+# Iteration's diagnose
+diag_tbl_A
+
 ```
+
+##### Segment B Halton draws loop halton = list(c(2, 3, 5, 7)) BGFS method
+```{r}
+
+ set.seed(1685)
+# ===============================
+# 1) ESPECIFICATION 
+# ===============================
+form_mixlB2 <- Choice ~ 0 + Project + Specie + Location + Price + ASC_accept + ASC_Att + ASC_SN + ASC_PBC + ASC_Service + ASC_SustDepart
+
+ranp <- c(
+  Project    = "n",
+  Specie     = "n",
+  Location   = "n",
+  ASC_accept = "n"
+)
+
+data <- df_mldB
+
+# ===============================
+# 2) LOOP PARAMETERS
+# ===============================
+R_start <- 800
+step_R  <- 200
+max_R   <- 2000
+
+
+# ===============================
+# 3) SAFE WRAPPER BFGS
+# ===============================
+fit_gmnl_safe <- function(formula, data, ranp, R, corr = FALSE, start = NULL){
+  gmnl(formula, data=data, model="mixl", ranp=ranp, panel=TRUE,
+       R=R, halton=list(prime = c(13, 17, 5, 7)), correlation=corr,
+       method="bhhh", start=start)   # <-- default BFGS
+}
+
+# ===============================
+# 4) STABILISATION LOOP
+# ===============================
+fits_B <- list()
+diag_tbl_B <- data.frame(
+  R = integer(), logLik = numeric(),
+  max_beta_metric = numeric(), mover_beta = character(), metric_used_beta = character(),
+  max_se_metric   = numeric(), mover_se   = character(), metric_used_se   = character(),
+  dLL = numeric(), dLL_rel = numeric(),
+  stringsAsFactors = FALSE
+)
+
+prev_fit   <- NULL
+prev_coefs <- NULL
+Rcurr <- as.integer(R_start)
+
+repeat{
+  cat(sprintf("\n[gmnl] MIXL-B (corr=FALSE) con R = %d (Halton, BFGS) ...\n", Rcurr))
+  t0 <- Sys.time()
+  fitB <- fit_gmnl_safe(form_mixlB2, data = data, ranp = ranp,
+                        R = Rcurr, corr = FALSE, start = prev_coefs)
+  t1 <- Sys.time()
+  llB <- len1(logLik(fitB))
+  cat(sprintf("  Hecho en %.1f s | logLik = %.3f\n",
+              as.numeric(difftime(t1, t0, units="secs")), llA))
+
+  fits_B[[as.character(Rcurr)]] <- fitB
+  coefs_now <- tryCatch(coef(fitA), error=function(e) NULL)
+
+  if(is.null(prev_fit)){
+    diag_tbl_B <- rbind(diag_tbl_B, data.frame(
+      R = Rcurr, logLik = llB,
+      max_beta_metric = NA_real_, mover_beta = NA_character_, metric_used_beta = NA_character_,
+      max_se_metric   = NA_real_, mover_se   = NA_character_, metric_used_se   = NA_character_,
+      dLL = NA_real_, dLL_rel = NA_real_
+    ))
+  } else {
+    cmp <- compare_models_hybrid(fitB, prev_fit, beta_switch, se_switch)
+    dLL_abs <- len1(cmp$dll)
+    dLL_rel <- abs(dLL_abs) / (abs(len1(logLik(prev_fit))) + 1e-12)
+
+    cat(sprintf("  SUMMING UP: max β-metric=%.6f | max SE-metric=%.6f | ΔLL_rel=%.6e\n",
+                len1(cmp$max_beta), len1(cmp$max_se), dLL_rel))
+
+    row <- data.frame(
+      R = Rcurr, logLik = llB,
+      max_beta_metric = len1(cmp$max_beta),
+      mover_beta      = cmp$top_beta$name,
+      metric_used_beta= cmp$top_beta$used,
+      max_se_metric   = len1(cmp$max_se),
+      mover_se        = cmp$top_se$name,
+      metric_used_se  = cmp$top_se$used,
+      dLL             = dLL_abs,
+      dLL_rel         = dLL_rel,
+      stringsAsFactors = FALSE
+    )
+
+      # ---- MEAN VS. SD CRITERIA----
+    b_new <- coef(fitB); b_old <- coef(prev_fit)
+    alln  <- union(names(b_new), names(b_old))
+    b_new <- b_new[alln]; b_old <- b_old[alln]
+    is_sd <- grepl("^sd\\.", alln)
+
+    db_abs <- abs(b_new - b_old)
+    db_rel <- abs(b_new - b_old) / (abs(b_old) + 1e-12)
+
+    # MEAN
+    db_abs_mean <- db_abs[!is_sd]; db_rel_mean <- db_rel[!is_sd]; b_old_mean <- b_old[!is_sd]
+    beta_ok_mean <- all(ifelse(abs(b_old_mean) < beta_switch,
+                               db_abs_mean < beta_abs_tol_mean,
+                               db_rel_mean < beta_rel_tol_mean), na.rm = TRUE)
+
+    # DEVIATION
+    db_abs_sd <- db_abs[is_sd]; db_rel_sd <- db_rel[is_sd]; b_old_sd <- b_old[is_sd]
+    beta_ok_sd <- all(ifelse(abs(b_old_sd) < beta_switch,
+                             db_abs_sd < beta_abs_tol_sd,
+                             db_rel_sd < beta_rel_tol_sd), na.rm = TRUE)
+
+    beta_ok <- beta_ok_mean && beta_ok_sd
+    se_ok   <- ifelse(row$metric_used_se == "rel",
+                      row$max_se_metric < se_rel_tol,
+                      row$max_se_metric < se_abs_tol)
+    ll_ok   <- row$dLL_rel < ll_rel_tol
+
+    diag_tbl_B <- rbind(diag_tbl_B, row)
+
+    # ---- Stopping conditions----
+    if (!is.na(beta_ok) && !is.na(se_ok) && !is.na(ll_ok) && beta_ok && se_ok && ll_ok) {
+      cat(">> the model reach stability (mean, sd, SE y ΔLL_rel). Stop here.\n")
+      prev_fit   <- fitB
+      prev_coefs <- coefs_now
+      break
+    }
+  }
+
+  # ---- Upper limit control ----
+  if (Rcurr + step_R > max_R){
+    cat(sprintf(">> The model reach max_R=%d without fitting. Stop.\n", max_R))
+    prev_fit   <- fitB
+    prev_coefs <- coefs_now
+    break
+  }
+
+  prev_fit   <- fitB
+  prev_coefs <- coefs_now
+  Rcurr      <- Rcurr + step_R
+}
+
+# ===============================
+# 5) Final model
+# ===============================
+R_final_B   <- diag_tbl_B$R[nrow(diag_tbl_B)]
+mixlB_final_Clean <- fits_B[[as.character(R_final_B)]]
+
+cat(sprintf("\n[MIXL-B final)] R = %s | logLik = %.3f\n",
+            R_final_B, len1(logLik(mixlB_final_Clean))))
+summary(mixlB_final_Clean)
+
+# Iteration's diagnose
+diag_tbl_B
+```
+
+#### Model fit
+```{r}
+AIC(mixlA_final_Clean)
+AIC(mixlB_final_Clean)
+BIC(mixlA_final_Clean)
+BIC(mixlB_final_Clean)
+
+##Mixed logit
+# Log-likelihood 
+ll_modelA <- as.numeric(logLik(mixlA_final_Clean))
+
+# Log-likelihood null model 
+ll_nullA <- as.numeric(logLik(mlogit(Choice ~ 1, data = df_mldA)))
+
+# McFadden's pseudo-R²
+R2_McFaddenA <- 1 - (ll_modelA / ll_nullA)
+R2_McFaddenA
+
+
+#Segment B
+# Log-likelihood del modelo estimado
+ll_modelB <- as.numeric(logLik(mixlB_final_Clean))
+
+# Log-likelihood null model
+ll_nullB <- as.numeric(logLik(mlogit(Choice ~ 1, data = df_mldB)))
+
+# McFadden's pseudo-R²
+R2_McFaddenB <- 1 - (ll_modelB / ll_nullB)
+R2_McFaddenB
+
+```
+
+## Willigness to pay estimations
+
+### Delta Method
+
+#### Segment A
+
+```{r}
+##WTP
+# Coefs y VCOV
+b   <- coef(mixlH3A)
+V   <- vcov(mixlH3A)
+
+# WTP attributes
+attrs <- c("Project","Specie","Location")
+
+#  WTP and IC95% with Delta method
+wtp_delta <- function(attr, b, V, price_name="Price") {
+  beta_k <- b[attr]; beta_p <- b[price_name]
+  # vector of parameters (attr, price)
+  par_vec <- c(beta_k, beta_p)
+  # covariance submatrix
+  Vsub <- V[c(attr, price_name), c(attr, price_name)]
+  # g = - beta_k / beta_p
+  est  <- as.numeric(-2*beta_k / beta_p)
+  se   <- sqrt( deltamethod(~ -x1/x2, mean = par_vec, cov = Vsub) )
+  lo   <- est - 1.96*se
+  hi   <- est + 1.96*se
+  data.frame(attribute=attr, WTP=est, SE=se, CI_low=lo, CI_high=hi)
+}
+
+wtp_A_delta <- bind_rows(lapply(attrs, wtp_delta, b=b, V=V, price_name="Price"))
+print(wtp_A_delta)
+```
+
+#### Segment B
+
+```{r}
+##WTP
+# Coefs y VCOV
+b   <- coef(mixlH3B)
+V   <- vcov(mixlH3B)
+
+# WTP attributes
+attrs <- c("Project","Specie","Location")
+
+#  WTP and IC95% with Delta method
+wtp_delta <- function(attr, b, V, price_name="Price") {
+  beta_k <- b[attr]; beta_p <- b[price_name]
+  # vector of parameters (attr, price)
+  par_vec <- c(beta_k, beta_p)
+  # covariance submatrix
+  Vsub <- V[c(attr, price_name), c(attr, price_name)]
+  # g = - beta_k / beta_p
+  est  <- as.numeric(- 2*beta_k / beta_p)
+  se   <- sqrt( deltamethod(~ -x1/x2, mean = par_vec, cov = Vsub) )
+  lo   <- est - 1.96*se
+  hi   <- est + 1.96*se
+  data.frame(attribute=attr, WTP=est, SE=se, CI_low=lo, CI_high=hi)
+}
+
+wtp_B_delta <- bind_rows(lapply(attrs, wtp_delta, b=b, V=V, price_name="Price"))
+print(wtp_B_delta)
+```
+
+### Krinsky-Robb
+
+#### Segment A
+
+```{r}
+set.seed(2025)
+S <- 20000  # nº de draws
+
+# Takes draws from the parametric vector
+draws <- MASS::mvrnorm(n = S, mu = b, Sigma = V)
+
+# Helper to extraxt values in named columns
+col_ix <- function(nm) match(nm, names(b))
+
+wtp_kr <- lapply(attrs, function(attr){
+  bk <- draws[, col_ix(attr)]
+  bp <- draws[, col_ix("Price")]
+  w  <- -2* bk / bp
+  data.frame(attribute=attr,
+             WTP_mean = mean(w, na.rm=TRUE),
+             Q2.5 = quantile(w, 0.025, na.rm=TRUE),
+             Q97.5 = quantile(w, 0.975, na.rm=TRUE))
+})
+wtp_table_kr <- bind_rows(wtp_kr)
+print(wtp_table_kr)
+```
+
+#### Segment B
+
+```{r}
+set.seed(2025)
+S <- 20000  # nº de draws
+
+
+# Takes draws from the parametric vector
+draws <- MASS::mvrnorm(n = S, mu = b, Sigma = V)
+
+# Helper to extraxt values in named columns
+
+wtp_kr <- lapply(attrs, function(attr){
+  bk <- draws[, col_ix(attr)]
+  bp <- draws[, col_ix("Price")]
+  w  <- -2* bk / bp
+  data.frame(attribute=attr,
+             WTP_mean = mean(w, na.rm=TRUE),
+             Q2.5 = quantile(w, 0.025, na.rm=TRUE),
+             Q97.5 = quantile(w, 0.975, na.rm=TRUE))
+})
+wtp_table_kr <- bind_rows(wtp_kr)
+print(wtp_table_kr)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
