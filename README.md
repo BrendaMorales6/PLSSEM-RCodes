@@ -1,7 +1,7 @@
-# Structural equation model code analysed with partial least squares
+# Structural equation model code analysed with partial least squares and mixed logit models
 
-This repository contains the RStudio code employed for the analysis of Structural Equation Modelling using Partial Least Squares, applied to a Theory of Planned behaviour survey.  The code has been developed specifically for this study and allows for the replication of the results published at (Springer Nature?).
-The main R library is "plspm". 
+This repository contains the RStudio code employed for the analysis of Structural Equation Modelling using Partial Least Squares, applied to a Theory of Planned behaviour survey, as well as the loop develop to stabilise tha analisys ofd a Discrete Choice Experiment using mixed logit models.  The code has been developed specifically for this study and allows for the replication of the results published at (Springer Nature?).
+The main R library employed for the PLS analysis is "plspm". 
 
 # Bibliography
 
@@ -28,7 +28,7 @@ BibTeX citation:
   author = {Morales, Brenda and Ovando, Paola},
   title = {Organisational Attitudes and Preferences Toward Forest Carbon Offsets in Spain’s Carbon Footprint Registry},
   journal = {Journal Name},
-  year = {2025},
+  year = {2026},
   volume = {XX},
   pages = {XX-XX},
   doi = {DOI link}
