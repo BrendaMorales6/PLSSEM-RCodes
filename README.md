@@ -1,7 +1,7 @@
 # Structural equation model code analysed with partial least squares and mixed logit models
 
-This repository contains the RStudio code employed for the analysis of Structural Equation Modelling using Partial Least Squares, applied to a Theory of Planned behaviour survey, as well as the loop develop to stabilise tha analisys ofd a Discrete Choice Experiment using mixed logit models.  The code has been developed specifically for this study and allows for the replication of the results published at (Springer Nature?).
-The main R library employed for the PLS analysis is "plspm". 
+This repository contains the RStudio code employed for the analysis of Structural Equation Modelling using Partial Least Squares, applied to a Theory of Planned behaviour survey, as well as the loop develop to stabilise tha analisys ofd a Discrete Choice Experiment using mixed logit models.  The code has been developed specifically for this study and allows for the replication of the results published at Ecological Economics.
+
 
 # Bibliography
 
