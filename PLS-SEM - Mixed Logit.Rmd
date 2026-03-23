@@ -1,5 +1,5 @@
 ---
-title: "RCode SEM-WTP"
+title: "RCode SEM-WTP - MixedLogit"
 date: "`r Sys.Date()`"
 output: pdf_document
 ---
@@ -77,7 +77,6 @@ fac.SEM
 ```
 
 *Structural model*
-
 
 ```{r}
 path_matrix <- rbind(
@@ -219,6 +218,28 @@ file_path <- "SemConstructs.xlsx"
 write_xlsx(SemConstructs, path = file_path)
 ```
 #Random utility models
+
+## Packages and libraries
+
+```{r}
+library(readxl)
+library(dplyr)
+library(mlogit)
+library(gmnl)
+library(MASS)
+library(msm) 
+library(ggplot2)
+library(purrr)
+library(lme4)
+library(survival)
+library(xtable)
+library(tidyr)
+library(flexmix)        
+library(tidyverse)     
+library(corrplot)      
+library(gridExtra)     
+```
+
 ## Data
 ```{r}
 dfA <- read_excel("D:/ChoiceEcolEcon.xlsx", sheet = "SegAClean")
@@ -311,172 +332,130 @@ df_mldB$ASC_PYME <- df_mldB$ASC_accept * df_mldB$pyme
 df_mldB$ASC_SustDepart <- df_mldB$ASC_accept * df_mldB$SustDepart
 df_mldB$ASC_Pastbehav <- df_mldB$ASC_accept * df_mldB$PastBehav
 ```
+### Conditional models
 
-
-## Test robustness 
+## Base multinomial logit
 ```{r}
-## =========================
-## 0) Helpers
-## =========================
-get_ll <- function(m) as.numeric(logLik(m))
-get_k  <- function(m) attr(logLik(m), "df")
+# MNL baseline (atributes + ASC) ---
+mnlT0 <- mlogit(Choice ~ 0 + Project + Specie + Location + Price + ASC_accept,
+               data = df_mldTotal)
+summary(mnlT0)
 
-lr_test <- function(m_small, m_large) {
-  ll0 <- get_ll(m_small); ll1 <- get_ll(m_large)
-  k0  <- get_k(m_small);  k1  <- get_k(m_large)
+# MNL baseline (atributes + ASC) ---
+mnlA0 <- mlogit(Choice ~ 0 + Project + Specie + Location + Price  + ASC_accept,
+               data = df_mldA)
+summary(mnlA0)
 
-  if (k1 <= k0) stop("m_large must have more parameters than m_small (nested models).")
-
-  LR  <- 2 * (ll1 - ll0)
-  df  <- k1 - k0
-  p   <- pchisq(LR, df = df, lower.tail = FALSE)
-
-  data.frame(
-    LL_small = ll0, LL_large = ll1,
-    k_small = k0,  k_large = k1,
-    LR = LR, df = df, p_value = p
-  )
-}
-
-aicbic <- function(m) {
-  data.frame(
-    LL  = get_ll(m),
-    k   = get_k(m),
-    AIC = AIC(m),
-    BIC = BIC(m)
-  )
-}
-
-## =========================
-## 1) LR tests between nested models (per segment)
-## =========================
-# Segment A
-LR_A_base_vs_ext <- lr_test(m_cl_A0, m_cl_A1)
-LR_A_ext_vs_tpb  <- lr_test(m_cl_A1, m_cl_A3)
-
-# Segment B
-LR_B_base_vs_ext <- lr_test(m_cl_B0, m_cl_B1)
-LR_B_ext_vs_tpb  <- lr_test(m_cl_B1, m_cl_B3)
-
-LR_A_base_vs_ext
-LR_A_ext_vs_tpb
-LR_B_base_vs_ext
-LR_B_ext_vs_tpb
-
-## Optional: pretty table
-LR_table <- rbind(
-  cbind(Segment="A", Comparison="Baseline vs Extended", LR_A_base_vs_ext),
-  cbind(Segment="A", Comparison="Extended vs TPB",     LR_A_ext_vs_tpb),
-  cbind(Segment="B", Comparison="Baseline vs Extended", LR_B_base_vs_ext),
-  cbind(Segment="B", Comparison="Extended vs TPB",     LR_B_ext_vs_tpb)
-)
-print(LR_table, row.names = FALSE)
-
-## =========================
-## 2) Coefficient stability table across specs
-##    (core attributes only)
-## =========================
-core <- c("Project","Location","Specie","Price")
-
-coef_table <- function(...) {
-  mods <- list(...)
-  mod_names <- as.character(match.call())[-1]
-  out <- lapply(seq_along(mods), function(i){
-    b  <- coef(mods[[i]])
-    se <- sqrt(diag(vcov(mods[[i]])))
-    keep <- intersect(core, names(b))
-    data.frame(
-      model = mod_names[i],
-      term  = keep,
-      estimate = b[keep],
-      se = se[keep],
-      z = b[keep]/se[keep],
-      p = 2*pnorm(abs(b[keep]/se[keep]), lower.tail = FALSE),
-      row.names = NULL
-    )
-  })
-  do.call(rbind, out)
-}
-
-# Segment A
-stab_A <- coef_table(m_cl_A0, m_cl_A1, m_cl_A3)
-# Segment B
-stab_B <- coef_table(m_cl_B0, m_cl_B1, m_cl_B3)
-
-stab_A
-stab_B
-
-## If you want a wide table (one row per term, columns by model)
-to_wide <- function(stab_df){
-  # base R reshape
-  reshape(stab_df[,c("model","term","estimate")],
-          idvar="term", timevar="model", direction="wide")
-}
-to_wide(stab_A)
-to_wide(stab_B)
-
-## =========================
-## 3) WTP robustness: Delta vs Krinsky–Robb 
-##    - Uses your model's coef + vcov
-##    - Works with dummy coding (0/1) OR effect coding (-1/+1)
-## =========================
-# Delta-method WTP for a single attribute coefficient beta_k:
-# WTP = - beta_k / beta_price
-wtp_delta_single <- function(attr, b, V, price_name="Price") {
-  if (!requireNamespace("msm", quietly=TRUE)) {
-    stop("Install package 'msm' to use deltamethod: install.packages('msm')")
-  }
-  beta_k <- b[attr]; beta_p <- b[price_name]
-  par_vec <- c(beta_k, beta_p)
-  Vsub <- V[c(attr, price_name), c(attr, price_name)]
-  est <- as.numeric(- beta_k / beta_p)
-  se  <- sqrt(msm::deltamethod(~ -x1/x2, mean = par_vec, cov = Vsub))
-  c(est=est, se=se, lo=est-1.96*se, hi=est+1.96*se)
-}
-wtp_kr_single <- function(attr, b, V, price_name="Price", S=20000, seed=2025) {
-  if (!requireNamespace("MASS", quietly=TRUE)) {
-    stop("Install package 'MASS' to use mvrnorm (usually bundled).")
-  }
-  set.seed(seed)
-  draws <- MASS::mvrnorm(n=S, mu=b, Sigma=V)
-
-  ix_k <- match(attr, names(b))
-  ix_p <- match(price_name, names(b))
-
-  w <- - draws[,ix_k] / draws[,ix_p]
-  w <- w[is.finite(w)]  # safety
-
-  qs <- as.numeric(quantile(w, probs = c(0.025, 0.975), na.rm = TRUE, names = FALSE))
-
-  c(mean = mean(w, na.rm=TRUE),
-    q2.5 = qs[1],
-    q97.5 = qs[2])
-}
-
-
-wtp_compare <- function(model, attrs=c("Project","Specie","Location"),
-                        price_name="Price", S=20000, seed=2025) {
-  b <- coef(model); V <- vcov(model)
-  out <- lapply(attrs, function(a){
-    d <- wtp_delta_single(a, b, V, price_name)
-    k <- wtp_kr_single(a, b, V, price_name, S=S, seed=seed)
-    data.frame(
-      attribute=a,
-      WTP_delta = d["est"], CIlo_delta = d["lo"], CIhi_delta = d["hi"],
-      WTP_KR    = k["mean"], CIlo_KR    = k["q2.5"], CIhi_KR = k["q97.5"],
-      row.names = NULL
-    )
-  })
-  do.call(rbind, out)
-}
-
-# Run for TPB specs 
-WTP_A <- wtp_compare(m_cl_A3)
-WTP_B <- wtp_compare(m_cl_B3)
-
-WTP_A
-WTP_B
+# MNL baseline (atributes + ASC) ---
+mnlB0 <- mlogit(Choice ~ 0 + Project + Specie + Location + Price + ASC_accept,
+               data = df_mldB)
+summary(mnlB0)
 ```
+```{r}
+#Price interactuations
+
+df_mldTotal$Price_pyme  <- df_mldTotal$Price * df_mldTotal$pyme
+df_mldTotal$ASC_pyme  <- df_mldTotal$ASC_accept * df_mldTotal$pyme
+df_mldTotal$Price_large  <- df_mldTotal$Price * df_mldTotal$large
+df_mldTotal$ASC_large  <- df_mldTotal$ASC_accept * df_mldTotal$large
+df_mldTotal$Price_Segment <- df_mldTotal$Price * df_mldTotal$DSegment
+df_mldTotal$ASC_Segment <- df_mldTotal$ASC_accept * df_mldTotal$DSegment
+
+clTotalpyme_asc <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept  + ASC_pyme,
+  data = df_mldTotal,
+  model = "mnl"
+)
+
+mnlT0 <- mlogit(Choice ~ 0 + Project + Specie + Location + Price + ASC_accept,
+               data = df_mldTotal)
+summary(mnlT0)
+
+clTotallarge_asc <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept  + ASC_large,
+  data = df_mldTotal,
+  model = "mnl"
+)
+
+
+clTotalpyme_price <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept  +  Price_pyme,
+  data = df_mldTotal,
+  model = "mnl"
+)
+
+
+clTotallarge_price <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept  + Price_large,
+  data = df_mldTotal,
+  model = "mnl"
+)
+
+
+summary(clTotalpyme_asc)
+summary(clTotallarge_asc)
+summary(clTotalpyme_price)
+summary(clTotallarge_price)
+
+
+```
+
+#### Conditional logit: Production sector interactions
+```{r}
+df_mldTotal$Price_Servicios <- df_mldTotal$Price * df_mldTotal$Servicios
+df_mldTotal$Asc_Servicios <- df_mldTotal$ASC_accept * df_mldTotal$Servicios
+
+clTotalServ_asc <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept  + Price_Servicios,
+  data = df_mldTotal,
+  model = "mnl"
+)
+
+clTotalServ_price <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept  +  ASC_Servicios,
+  data = df_mldTotal,
+  model = "mnl"
+)
+
+summary(clTotalServ_asc)
+summary(clTotalServ_price)
+```
+
+#### Conditional logit: TPB + Sociodemographic variables
+```{r}
+#Price interactuations
+df_mldTotal$Price_Att <- df_mldTotal$Price * df_mldTotal$cAtt
+df_mldTotal$Price_SN  <- df_mldTotal$Price * df_mldTotal$cSN
+df_mldTotal$Price_Segment <- df_mldTotal$Price * df_mldTotal$DSegment
+df_mldTotal$ASC_Segment <- df_mldTotal$ASC_accept * df_mldTotal$DSegment
+df_mldTotal$ASC_Serv <- df_mldTotal$ASC_accept * df_mldTotal$Servicios
+
+
+clTotalTPB_socdem <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept + Price_Segment + ASC_Att + ASC_SN + ASC_PBC + ASC_Trust + ASC_Risk + ASC_Serv,
+  data = df_mldTotal,
+  model = "mnl"
+)
+summary(clTotalTPB_socdem)
+```
+
+### Conditional logit: Segment A
+```{r}
+clAec <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept + ASC_Att + ASC_SN + ASC_PBC + ASC_Trust + ASC_Risk + ASC_Serv,
+  data = df_mldA,
+  model = "mnl"
+)
+summary(clAec)
+
+clAs <- gmnl(
+  Choice ~ 0 + Project + Specie + Location + Price + ASC_accept + ASC_Att + ASC_SN + ASC_PBC + ASC_Trust + ASC_Risk + ASC_Serv + ASC_large,
+  data = df_mldA,
+  model = "mnl"
+)
+summary(clAs)
+```
+
 
 #### Mixed logit: Halton draws
 
@@ -1015,9 +994,172 @@ wtp_kr <- lapply(attrs, function(attr){
 wtp_table_kr <- bind_rows(wtp_kr)
 print(wtp_table_kr)
 ```
+# Supplementary material
+
+## Test robustness 
+```{r}
+## =========================
+## 0) Helpers
+## =========================
+get_ll <- function(m) as.numeric(logLik(m))
+get_k  <- function(m) attr(logLik(m), "df")
+
+lr_test <- function(m_small, m_large) {
+  ll0 <- get_ll(m_small); ll1 <- get_ll(m_large)
+  k0  <- get_k(m_small);  k1  <- get_k(m_large)
+
+  if (k1 <= k0) stop("m_large must have more parameters than m_small (nested models).")
+
+  LR  <- 2 * (ll1 - ll0)
+  df  <- k1 - k0
+  p   <- pchisq(LR, df = df, lower.tail = FALSE)
+
+  data.frame(
+    LL_small = ll0, LL_large = ll1,
+    k_small = k0,  k_large = k1,
+    LR = LR, df = df, p_value = p
+  )
+}
+
+aicbic <- function(m) {
+  data.frame(
+    LL  = get_ll(m),
+    k   = get_k(m),
+    AIC = AIC(m),
+    BIC = BIC(m)
+  )
+}
+
+## =========================
+## 1) LR tests between nested models (per segment)
+## =========================
+# Segment A
+LR_A_base_vs_ext <- lr_test(m_cl_A0, m_cl_A1)
+LR_A_ext_vs_tpb  <- lr_test(m_cl_A1, m_cl_A3)
+
+# Segment B
+LR_B_base_vs_ext <- lr_test(m_cl_B0, m_cl_B1)
+LR_B_ext_vs_tpb  <- lr_test(m_cl_B1, m_cl_B3)
+
+LR_A_base_vs_ext
+LR_A_ext_vs_tpb
+LR_B_base_vs_ext
+LR_B_ext_vs_tpb
+
+## Optional: pretty table
+LR_table <- rbind(
+  cbind(Segment="A", Comparison="Baseline vs Extended", LR_A_base_vs_ext),
+  cbind(Segment="A", Comparison="Extended vs TPB",     LR_A_ext_vs_tpb),
+  cbind(Segment="B", Comparison="Baseline vs Extended", LR_B_base_vs_ext),
+  cbind(Segment="B", Comparison="Extended vs TPB",     LR_B_ext_vs_tpb)
+)
+print(LR_table, row.names = FALSE)
+
+## =========================
+## 2) Coefficient stability table across specs
+##    (core attributes only)
+## =========================
+core <- c("Project","Location","Specie","Price")
+
+coef_table <- function(...) {
+  mods <- list(...)
+  mod_names <- as.character(match.call())[-1]
+  out <- lapply(seq_along(mods), function(i){
+    b  <- coef(mods[[i]])
+    se <- sqrt(diag(vcov(mods[[i]])))
+    keep <- intersect(core, names(b))
+    data.frame(
+      model = mod_names[i],
+      term  = keep,
+      estimate = b[keep],
+      se = se[keep],
+      z = b[keep]/se[keep],
+      p = 2*pnorm(abs(b[keep]/se[keep]), lower.tail = FALSE),
+      row.names = NULL
+    )
+  })
+  do.call(rbind, out)
+}
+
+# Segment A
+stab_A <- coef_table(m_cl_A0, m_cl_A1, m_cl_A3)
+# Segment B
+stab_B <- coef_table(m_cl_B0, m_cl_B1, m_cl_B3)
+
+stab_A
+stab_B
+
+## If you want a wide table (one row per term, columns by model)
+to_wide <- function(stab_df){
+  # base R reshape
+  reshape(stab_df[,c("model","term","estimate")],
+          idvar="term", timevar="model", direction="wide")
+}
+to_wide(stab_A)
+to_wide(stab_B)
+
+## =========================
+## 3) WTP robustness: Delta vs Krinsky–Robb 
+##    - Uses your model's coef + vcov
+##    - Works with dummy coding (0/1) OR effect coding (-1/+1)
+## =========================
+# Delta-method WTP for a single attribute coefficient beta_k:
+# WTP = - beta_k / beta_price
+wtp_delta_single <- function(attr, b, V, price_name="Price") {
+  if (!requireNamespace("msm", quietly=TRUE)) {
+    stop("Install package 'msm' to use deltamethod: install.packages('msm')")
+  }
+  beta_k <- b[attr]; beta_p <- b[price_name]
+  par_vec <- c(beta_k, beta_p)
+  Vsub <- V[c(attr, price_name), c(attr, price_name)]
+  est <- as.numeric(- beta_k / beta_p)
+  se  <- sqrt(msm::deltamethod(~ -x1/x2, mean = par_vec, cov = Vsub))
+  c(est=est, se=se, lo=est-1.96*se, hi=est+1.96*se)
+}
+wtp_kr_single <- function(attr, b, V, price_name="Price", S=20000, seed=2025) {
+  if (!requireNamespace("MASS", quietly=TRUE)) {
+    stop("Install package 'MASS' to use mvrnorm (usually bundled).")
+  }
+  set.seed(seed)
+  draws <- MASS::mvrnorm(n=S, mu=b, Sigma=V)
+
+  ix_k <- match(attr, names(b))
+  ix_p <- match(price_name, names(b))
+
+  w <- - draws[,ix_k] / draws[,ix_p]
+  w <- w[is.finite(w)]  # safety
+
+  qs <- as.numeric(quantile(w, probs = c(0.025, 0.975), na.rm = TRUE, names = FALSE))
+
+  c(mean = mean(w, na.rm=TRUE),
+    q2.5 = qs[1],
+    q97.5 = qs[2])
+}
 
 
+wtp_compare <- function(model, attrs=c("Project","Specie","Location"),
+                        price_name="Price", S=20000, seed=2025) {
+  b <- coef(model); V <- vcov(model)
+  out <- lapply(attrs, function(a){
+    d <- wtp_delta_single(a, b, V, price_name)
+    k <- wtp_kr_single(a, b, V, price_name, S=S, seed=seed)
+    data.frame(
+      attribute=a,
+      WTP_delta = d["est"], CIlo_delta = d["lo"], CIhi_delta = d["hi"],
+      WTP_KR    = k["mean"], CIlo_KR    = k["q2.5"], CIhi_KR = k["q97.5"],
+      row.names = NULL
+    )
+  })
+  do.call(rbind, out)
+}
 
+# Run for TPB specs 
+WTP_A <- wtp_compare(m_cl_A3)
+WTP_B <- wtp_compare(m_cl_B3)
+
+WTP_A
+WTP_B
+```
 
 
 
