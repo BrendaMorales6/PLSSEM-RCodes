@@ -690,10 +690,10 @@ diag_tbl_A
 
 ```
 
-##### Segment B Halton draws loop halton = list(c(2, 3, 5, 7)) BGFS method
+##### Segment B Halton draws loop halton = list(c(2, 11, 7, 13)) BGFS method
 ```{r}
 
- set.seed(1685)
+ set.seed(15622)
 # ===============================
 # 1) ESPECIFICATION 
 # ===============================
@@ -721,7 +721,7 @@ max_R   <- 2000
 # ===============================
 fit_gmnl_safe <- function(formula, data, ranp, R, corr = FALSE, start = NULL){
   gmnl(formula, data=data, model="mixl", ranp=ranp, panel=TRUE,
-       R=R, halton=list(prime = c(13, 17, 5, 7)), correlation=corr,
+       R=R, halton=list(prime = c(2, 11, 7, 13)), correlation=corr,
        method="bhhh", start=start)   # <-- default BFGS
 }
 
