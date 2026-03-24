@@ -14,9 +14,9 @@ Hair, J.F., Ringle, C.M., Sarstedt, M. (2011). Pls-sem: Indeed a silver bullet. 
 
 Hair, J.F., Ringle, C.M., Sarstedt, M. (2012). Partial least squares: The better approach to structural equation modeling? Long Range Planning, 45 (5-6), 312—319, https://doi.org/10.1016/J.LRP.2012.09.011
 
-Hair, J.F., Risher, M., J. J.and Sarstedt, Ringle, C.M. (2019). hen to use and how to report the results of pls-sem. European Business Review , 31 (1), 2–24, https://doi.org/10.1108/EBR-11-2018-0203/FULL/XML
+Hair, J.F., Risher, M., J. J. and Sarstedt, Ringle, C.M. (2019). hen to use and how to report the results of pls-sem. European Business Review , 31 (1), 2–24, https://doi.org/10.1108/EBR-11-2018-0203/FULL/XML
 
-McFadden,D., (1974). The measurement of urvan travel demand. Journal of Public Economy, 3(4), 303-328, https://doi.org/10.1016/0047-2727(74)90003-6
+McFadden, D., (1974). The measurement of urvan travel demand. Journal of Public Economy, 3(4), 303-328, https://doi.org/10.1016/0047-2727(74)90003-6
 
 Tenenhaus M., Esposito Vinzi V., Chatelin Y.M., and Lauro C. (2005) PLS path modeling. Computational Statistics & Data Analysis, 48, pp. 159-205.
 
